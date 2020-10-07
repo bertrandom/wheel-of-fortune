@@ -352,15 +352,21 @@ app.view('submit_puzzle', async ({ ack, body, view, context }) => {
 
     const lines = [];
 
-    lines[0] = view['state']['values']['line1']['input']['value'] ?? '';
-    lines[1] = view['state']['values']['line2']['input']['value'] ?? '';
-    lines[2] = view['state']['values']['line3']['input']['value'] ?? '';
-    lines[3] = view['state']['values']['line4']['input']['value'] ?? '';
+    lines[0] = view['state']['values']['line1']['input']['value'];
+    lines[1] = view['state']['values']['line2']['input']['value'];
+    lines[2] = view['state']['values']['line3']['input']['value'];
+    lines[3] = view['state']['values']['line4']['input']['value'];
 
-    var category = view['state']['values']['category']['input']['value'] ?? '';
+    var category = view['state']['values']['category']['input']['value'];
 
+    if (!category) {
+        category = '';
+    }
 
     for (var index in lines) {
+        if (!lines[index]) {
+            lines[index] = '';
+        }
         lines[index] = lines[index].toUpperCase();
     }
 
