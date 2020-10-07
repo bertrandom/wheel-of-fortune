@@ -1,18 +1,175 @@
 const config = require('config');
 const { App } = require('@slack/bolt');
 
+const Knex = require('knex');
+const knexConfig = require('./knexfile');
+
+const { Model } = require('objection');
+const { Puzzle } = require('./models/Puzzle');
+
+var environment = process.env.NODE_ENV;
+
+const knex = Knex(knexConfig[environment]);
+
+Model.knex(knex);
+
 const app = new App({
     token: config.slack.bot_access_token,
     signingSecret: config.slack.signing_secret
 });
 
-// Listens to incoming messages that contain "hello"
-app.message('hello', async ({ message, say }) => {
+var buildImageUri = function(puzzle) {
 
-    console.log(message);
+    const url = new URL("https://www.thewordfinder.com/wof-puzzle-generator/puzzle.php");
 
-    // say() sends a message to the channel where the event was triggered
-    await say(`Hey there <@${message.user}>!`);
+    url.searchParams.append("bg", "1");
+    url.searchParams.append("ln1", puzzle.progress_line1);
+    url.searchParams.append("ln2", puzzle.progress_line2);
+    url.searchParams.append("ln3", puzzle.progress_line3);
+    url.searchParams.append("ln4", puzzle.progress_line4);
+    url.searchParams.append("cat", puzzle.category);
+
+    return url.href;    
+
+}
+
+var isSolved = function(puzzle) {
+    return ((puzzle.answer_line1 === puzzle.progress_line1) && 
+        (puzzle.answer_line2 === puzzle.progress_line2) && 
+        (puzzle.answer_line3 === puzzle.progress_line3) && 
+        (puzzle.answer_line4 === puzzle.progress_line4));
+}
+
+var handleGuess = async function(puzzle, guess) {
+
+    var correct = false;
+
+    for (var i = 1; i <= 4; i++) {
+        var progressLine = puzzle['progress_line' + i];
+        var answerLine = puzzle['answer_line' + i];
+
+        var updatedProgressLine = progressLine.repeat(1);
+
+        for (var j = 0; j < progressLine.length; j++) {
+            var progressChar = progressLine[j];
+            var answerChar = answerLine[j];
+            if (progressChar === '_' && answerChar === guess) {
+                updatedProgressLine = updatedProgressLine.substring(0, j) + guess + updatedProgressLine.substring(j + 1);
+                correct = true;         
+            }
+        }
+        puzzle['progress_line' + i] = updatedProgressLine;
+    }
+
+    if (correct) {
+        const updatedPuzzle = await Puzzle.query().patchAndFetchById(puzzle.id, {
+            progress_line1: puzzle.progress_line1,
+            progress_line2: puzzle.progress_line2,
+            progress_line3: puzzle.progress_line3,
+            progress_line4: puzzle.progress_line4,
+            solved: isSolved(puzzle),
+        });
+        return updatedPuzzle;
+    }
+
+    return puzzle;
+
+}
+
+var getAnswer = function(puzzle) {
+    return ([puzzle.answer_line1, puzzle.answer_line2, puzzle.answer_line3, puzzle.answer_line4].join(" ")).trim();
+}
+
+var checkAnswer = async function(puzzle, guess) {
+
+    var answer = getAnswer(puzzle);
+
+    if (guess === answer) {
+        const updatedPuzzle = await Puzzle.query().patchAndFetchById(puzzle.id, {
+            progress_line1: puzzle.answer_line1,
+            progress_line2: puzzle.answer_line2,
+            progress_line3: puzzle.answer_line3,
+            progress_line4: puzzle.answer_line4,
+            solved: true
+        });
+        return updatedPuzzle;
+    }
+
+    return null;
+
+}
+
+var updateThread = async function(puzzle) {
+
+    const imageUri = buildImageUri(puzzle);
+
+    var blocks = [
+        {
+            "type": "image",
+            "image_url": imageUri,
+            "alt_text": "Wheel of Fortune"
+        }
+    ];
+
+    if (isSolved(puzzle)) {
+        blocks.push({
+            "type": "section",
+            "text": {
+                "type": "plain_text",
+                "text": "Puzzle solved! :tada:",
+                "emoji": true
+            }
+        });
+
+    }
+
+    return await app.client.chat.update({
+        token: config.slack.bot_access_token,
+        channel: puzzle.channel_id,
+        ts: puzzle.message_ts,
+        blocks: blocks,
+    });
+
+}
+
+app.message(async ({ message, say }) => {
+
+    if (message.thread_ts) {
+
+        let puzzle = await Puzzle.query().findOne({
+            "team_id": message.team,
+            "channel_id": message.channel,
+            "message_ts": message.thread_ts
+        });
+
+        if (!puzzle) {
+            return;
+        }
+
+        if (puzzle.solved) {
+            return;
+        }
+
+        if (message.text.length === 1) {
+
+            var guess = message.text.toUpperCase();
+            puzzle = await handleGuess(puzzle, guess);
+            await updateThread(puzzle);
+
+        } else {
+
+            var updatedPuzzle = await checkAnswer(puzzle, message.text.toUpperCase());
+            if (updatedPuzzle) {
+
+                puzzle = updatedPuzzle;
+                await updateThread(puzzle);
+
+            }
+
+        }
+
+    }
+
 });
 
 // The open_modal shortcut opens a plain old modal
@@ -24,6 +181,14 @@ app.shortcut('create_puzzle', async ({ shortcut, ack, client }) => {
 
         console.log(shortcut);
         console.log(client);
+
+        var exampleImageUri = buildImageUri({
+            progress_line1: "",
+            progress_line2: "WHEEL OF",
+            progress_line3: "FORTUNE",
+            progress_line4: "",
+            category: "SHOW TITLE"
+        });
 
         // Call the views.open method using one of the built-in WebClients
         const result = await client.views.open({
@@ -49,8 +214,24 @@ app.shortcut('create_puzzle', async ({ shortcut, ack, client }) => {
                 "blocks": [
                     {
                         "type": "image",
-                        "image_url": "https://www.thewordfinder.com/wof-puzzle-generator/puzzle.php?bg=1&ln1=&ln2=WHEEL%20OF&ln3=FORTUNE&ln4=&cat=&",
+                        "image_url": exampleImageUri,
                         "alt_text": "Wheel of Fortune"
+                    },
+                    {
+                        "type": "input",
+                        "block_id": "category",
+                        "element": {
+                            "type": "plain_text_input",
+                            "action_id": "input",
+                            "max_length": 32,
+                            "initial_value": "SHOW TITLE"
+                        },
+                        "label": {
+                            "type": "plain_text",
+                            "text": "Category or Hint",
+                            "emoji": true
+                        },
+                        "optional": true
                     },
                     {
                         "type": "input",
@@ -154,17 +335,34 @@ app.view('submit_puzzle', async ({ ack, body, view, context }) => {
     lines[2] = view['state']['values']['line3']['input']['value'] ?? '';
     lines[3] = view['state']['values']['line4']['input']['value'] ?? '';
 
+    var category = view['state']['values']['category']['input']['value'] ?? '';
+
+
     for (var index in lines) {
-        lines[index] = lines[index].replace(" ", "%20");
-        lines[index] = lines[index].replace(/[a-zA-Z]/g, "_");
+        lines[index] = lines[index].toUpperCase();
+    }
+
+    const progressLines = Object.assign({}, lines);
+
+    for (var index in progressLines) {
+        progressLines[index] = lines[index].replace(/[^ ]/g, "_");
     }
 
     const channelId = view['state']['values']['channel']['input']['selected_conversation'];
 
-    const imageUri = `https://www.thewordfinder.com/wof-puzzle-generator/puzzle.php?bg=1&ln1=${lines[0]}&ln2=${lines[1]}&ln3=${lines[2]}&ln4=${lines[3]}&cat=&`;
+    const imageUri = buildImageUri({
+        progress_line1: progressLines[0],
+        progress_line2: progressLines[1],
+        progress_line3: progressLines[2],
+        progress_line4: progressLines[3],
+        category: category,
+    });
+
+    console.log(imageUri);
 
     try {
-        await app.client.chat.postMessage({
+
+        let result = await app.client.chat.postMessage({
             token: context.botToken,
             channel: channelId,
             blocks: [
@@ -175,6 +373,39 @@ app.view('submit_puzzle', async ({ ack, body, view, context }) => {
                 }
             ]
         });
+
+        let puzzle = await Puzzle.query().insert({
+            team_id: result.message.team,
+            channel_id: result.channel,
+            message_ts: result.ts,
+            answer_line1: lines[0],
+            answer_line2: lines[1],
+            answer_line3: lines[2],
+            answer_line4: lines[3],
+            progress_line1: progressLines[0],
+            progress_line2: progressLines[1],
+            progress_line3: progressLines[2],
+            progress_line4: progressLines[3],
+            category: category,
+            solved: false,
+        });
+
+        let threadResult = await app.client.chat.postMessage({
+            token: context.botToken,
+            channel: channelId,
+            thread_ts: result.ts,
+            blocks: [
+                {
+                    "type": "section",
+                    "text": {
+                        "type": "plain_text",
+                        "text": "Reply to this thread with a letter or the answer to guess.",
+                        "emoji": true
+                    }
+                }
+            ]            
+        });      
+
     }
     catch (error) {
         console.error(error);

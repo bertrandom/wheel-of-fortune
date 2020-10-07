@@ -5,7 +5,7 @@
 		"client_secret": "xxx",
 		"signing_secret": "xxx",
 		"verification_token": "xxx",
-		"bot_access_token": "xoxb-123-456-789",
+		"bot_access_token": "xoxb-123-456-789"
 	},
 	"port": 8080
 }

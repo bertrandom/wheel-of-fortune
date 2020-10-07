@@ -4,12 +4,17 @@
   "description": "",
   "main": "index.js",
   "scripts": {
+    "pm2": "pm2 start ecosystem.config.js",
+    "ngrok": "ngrok http -bind-tls=true -subdomain=$npm_package_name 8080",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "author": "",
   "license": "ISC",
   "dependencies": {
     "@slack/bolt": "^2.4.1",
-    "config": "^3.3.2"
+    "config": "^3.3.2",
+    "knex": "^0.21.6",
+    "objection": "^2.2.3",
+    "sqlite3": "^5.0.0"
   }
 }
