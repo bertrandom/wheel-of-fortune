@@ -10,7 +10,7 @@ module.exports = {
       name      : package.name,
       script    : './app.js',
       watch     : true,
-      ignore_watch: ["node_modules", ".git"],
+      ignore_watch: ["node_modules", ".git", "db"],
       instance_var: 'INSTANCE_ID',
       env: {
         "NODE_ENV": 'dev'
