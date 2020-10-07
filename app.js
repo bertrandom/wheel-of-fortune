@@ -206,11 +206,7 @@ app.message(async ({ message, client }) => {
 app.shortcut('create_puzzle', async ({ shortcut, ack, client }) => {
 
     try {
-        // Acknowledge shortcut request
         await ack();
-
-        console.log(shortcut);
-        console.log(client);
 
         var exampleImageUri = buildImageUri({
             progress_line1: "",
@@ -344,7 +340,6 @@ app.shortcut('create_puzzle', async ({ shortcut, ack, client }) => {
             }
         });
 
-        console.log(result);
     }
     catch (error) {
         console.error(error);
@@ -353,12 +348,7 @@ app.shortcut('create_puzzle', async ({ shortcut, ack, client }) => {
 
 // Handle a view_submission event
 app.view('submit_puzzle', async ({ ack, body, view, context }) => {
-    // Acknowledge the view_submission event
     await ack();
-
-    console.log(context);
-
-    console.log(view.state.values);
 
     const lines = [];
 
@@ -389,8 +379,6 @@ app.view('submit_puzzle', async ({ ack, body, view, context }) => {
         progress_line4: progressLines[3],
         category: category,
     });
-
-    console.log(imageUri);
 
     try {
 
