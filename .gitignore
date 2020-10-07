@@ -4,4 +4,4 @@ package-lock.json
 config/local.json5
 config/prod.json5
 sftp-config.json
-old.db
+db/*

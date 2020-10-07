@@ -6,6 +6,7 @@ const knexConfig = require('./knexfile');
 
 const { Model } = require('objection');
 const { Puzzle } = require('./models/Puzzle');
+const { Workspace } = require('./models/Workspace');
 
 var environment = process.env.NODE_ENV;
 
@@ -14,8 +15,40 @@ const knex = Knex(knexConfig[environment]);
 Model.knex(knex);
 
 const app = new App({
-    token: config.slack.bot_access_token,
-    signingSecret: config.slack.signing_secret
+    signingSecret: config.slack.signing_secret,
+    clientId: config.slack.client_id,
+    clientSecret: config.slack.client_secret,
+    stateSecret: config.slack.state_secret,
+    scopes: ['channels:history', 'chat:write', 'commands'],
+    installationStore: {
+        storeInstallation: async (installation) => {
+
+            return await Workspace.query().insert({
+                team_id: installation.team.id,
+                team_name: installation.team.name,
+                install_user_id: installation.user.id,
+                bot_id: installation.bot.id,
+                bot_user_id: installation.bot.userId,
+                bot_access_token: installation.bot.token,
+                scopes: JSON.stringify(installation.bot.scopes),
+                installation: JSON.stringify(installation),
+            });
+
+        },
+        fetchInstallation: async (InstallQuery) => {
+
+            var workspace = await Workspace.query().findOne({
+                team_id: InstallQuery.teamId
+            });
+
+            if (workspace) {
+                return JSON.parse(workspace.installation);
+            }
+
+            return null;
+
+        },
+    },
 });
 
 var buildImageUri = function(puzzle) {
@@ -99,7 +132,7 @@ var checkAnswer = async function(puzzle, guess) {
 
 }
 
-var updateThread = async function(puzzle) {
+var updateThread = async function(puzzle, client) {
 
     const imageUri = buildImageUri(puzzle);
 
@@ -123,8 +156,7 @@ var updateThread = async function(puzzle) {
 
     }
 
-    return await app.client.chat.update({
-        token: config.slack.bot_access_token,
+    return await client.chat.update({
         channel: puzzle.channel_id,
         ts: puzzle.message_ts,
         blocks: blocks,
@@ -132,7 +164,7 @@ var updateThread = async function(puzzle) {
 
 }
 
-app.message(async ({ message, say }) => {
+app.message(async ({ message, client }) => {
 
     if (message.thread_ts) {
 
@@ -154,16 +186,14 @@ app.message(async ({ message, say }) => {
 
             var guess = message.text.toUpperCase();
             puzzle = await handleGuess(puzzle, guess);
-            await updateThread(puzzle);
+            await updateThread(puzzle, client);
 
         } else {
 
             var updatedPuzzle = await checkAnswer(puzzle, message.text.toUpperCase());
             if (updatedPuzzle) {
-
                 puzzle = updatedPuzzle;
-                await updateThread(puzzle);
-
+                await updateThread(puzzle, client);
             }
 
         }
@@ -325,6 +355,8 @@ app.shortcut('create_puzzle', async ({ shortcut, ack, client }) => {
 app.view('submit_puzzle', async ({ ack, body, view, context }) => {
     // Acknowledge the view_submission event
     await ack();
+
+    console.log(context);
 
     console.log(view.state.values);
 
