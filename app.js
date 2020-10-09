@@ -19,7 +19,7 @@ const app = new App({
     clientId: config.slack.client_id,
     clientSecret: config.slack.client_secret,
     stateSecret: config.slack.state_secret,
-    scopes: ['channels:history', 'chat:write', 'commands'],
+    scopes: ['channels:history', 'chat:write', 'commands', 'reactions:write'],
     installationStore: {
         storeInstallation: async (installation) => {
 
@@ -95,17 +95,17 @@ var handleGuess = async function(puzzle, guess) {
     }
 
     if (correct) {
-        const updatedPuzzle = await Puzzle.query().patchAndFetchById(puzzle.id, {
+        puzzle = await Puzzle.query().patchAndFetchById(puzzle.id, {
             progress_line1: puzzle.progress_line1,
             progress_line2: puzzle.progress_line2,
             progress_line3: puzzle.progress_line3,
             progress_line4: puzzle.progress_line4,
             solved: isSolved(puzzle),
         });
-        return updatedPuzzle;
+        return {correct: correct, puzzle: puzzle};
     }
 
-    return puzzle;
+    return { correct: correct, puzzle: puzzle };
 
 }
 
@@ -118,17 +118,17 @@ var checkAnswer = async function(puzzle, guess) {
     var answer = getAnswer(puzzle);
 
     if (guess === answer) {
-        const updatedPuzzle = await Puzzle.query().patchAndFetchById(puzzle.id, {
+        puzzle = await Puzzle.query().patchAndFetchById(puzzle.id, {
             progress_line1: puzzle.answer_line1,
             progress_line2: puzzle.answer_line2,
             progress_line3: puzzle.answer_line3,
             progress_line4: puzzle.answer_line4,
             solved: true
         });
-        return updatedPuzzle;
+        return { correct: true, puzzle: puzzle };
     }
 
-    return null;
+    return { correct: false, puzzle: puzzle };
 
 }
 
@@ -145,13 +145,17 @@ var updateThread = async function(puzzle, client) {
     ];
 
     if (isSolved(puzzle)) {
-        blocks.push({
-            "type": "section",
-            "text": {
-                "type": "plain_text",
-                "text": "Puzzle solved! :tada:",
-                "emoji": true
-            }
+
+        await client.reactions.add({
+            channel: puzzle.channel_id,
+            timestamp: puzzle.message_ts,
+            name: 'tada',
+        });
+
+        await client.reactions.add({
+            channel: puzzle.channel_id,
+            timestamp: puzzle.message_ts,
+            name: 'white_check_mark',
         });
 
     }
@@ -168,6 +172,8 @@ app.message(async ({ message, client }) => {
 
     if (message.thread_ts) {
 
+        let correct = false;
+        let result = null;
         let puzzle = await Puzzle.query().findOne({
             "team_id": message.team,
             "channel_id": message.channel,
@@ -182,17 +188,36 @@ app.message(async ({ message, client }) => {
             return;
         }
 
-        if (message.text.length === 1) {
+        if (message.text.trim().length === 1) {
 
-            var guess = message.text.toUpperCase();
-            puzzle = await handleGuess(puzzle, guess);
+            var guess = message.text.trim().toUpperCase();
+            result = await handleGuess(puzzle, guess);
+
+            correct = result.correct;
+            puzzle = result.puzzle;
+
+            await client.reactions.add({
+                channel: message.channel,
+                timestamp: message.ts,
+                name: correct ? 'thumbsup' : 'thumbsdown'
+            });
             await updateThread(puzzle, client);
 
         } else {
 
-            var updatedPuzzle = await checkAnswer(puzzle, message.text.toUpperCase());
-            if (updatedPuzzle) {
-                puzzle = updatedPuzzle;
+            result = await checkAnswer(puzzle, message.text.toUpperCase());
+            console.log(result);
+
+            correct = result.correct;
+            puzzle = result.puzzle;
+
+            await client.reactions.add({
+                channel: message.channel,
+                timestamp: message.ts,
+                name: correct ? 'tada' : 'no_good'
+            });
+
+            if (correct) {
                 await updateThread(puzzle, client);
             }
 
